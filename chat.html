@@ -636,7 +636,7 @@ body {
       <div class="modal-section-title">Search</div>
       <div class="field">
         <label class="field-label">SearXNG URL</label>
-        <input type="text" id="s-searxng" placeholder="http://192.168.1.x:8080" value="http://localhost:8889">
+                <input type="text" id="s-searxng" placeholder="http://192.168.1.x:8080" value="http://localhost:8889">
         <span class="field-hint">Your SearXNG instance. Leave blank to disable search.</span>
       </div>
     </div>
@@ -889,6 +889,53 @@ function appendStatus(text, isError) {
   scrollBottom();
 }
 
+// ── URL detection ─────────────────────────────────────────────────────────
+function extractUrl(text) {
+  const m = text.match(/https?:\/\/[^\s]+/);
+  return m ? m[0] : null;
+}
+
+// ── URL fetch via proxy ───────────────────────────────────────────────────
+async function fetchUrl(url) {
+  // Route through the searxng proxy origin so CORS is not an issue
+  // We use a simple fetch-relay endpoint on the proxy
+  const relay = `${settings.searxngUrl.replace(/\/search.*$/, '')}/fetch?url=${encodeURIComponent(url)}`;
+  try {
+    const resp = await fetch(relay);
+    if (resp.ok) {
+      const text = await resp.text();
+      if (text && text.length > 100) return text;
+    }
+  } catch {}
+  // Fallback: try fetching directly (works if CORS is open)
+  try {
+    const resp = await fetch(url);
+    if (resp.ok) {
+      const html = await resp.text();
+      return stripHtml(html);
+    }
+  } catch {}
+  return null;
+}
+
+function stripHtml(html) {
+  // Remove scripts, styles, nav, footer
+  html = html.replace(/<script[\s\S]*?<\/script>/gi, '');
+  html = html.replace(/<style[\s\S]*?<\/style>/gi, '');
+  html = html.replace(/<nav[\s\S]*?<\/nav>/gi, '');
+  html = html.replace(/<footer[\s\S]*?<\/footer>/gi, '');
+  html = html.replace(/<header[\s\S]*?<\/header>/gi, '');
+  // Strip tags
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  const text = (tmp.textContent || tmp.innerText || '').replace(/\s+/g, ' ').trim();
+  return text.slice(0, 6000);
+}
+
+function buildFetchCtx(url, content, query) {
+  return `The user asked: "${query}"\n\nHere is the content of the page at ${url}:\n\n${content}\n\nAnswer based on the page content above. Be concise. /no_think`;
+}
+
 // ── SearXNG ───────────────────────────────────────────────────────────────
 async function searxSearch(query) {
   const url = `${settings.searxngUrl}/search?q=${encodeURIComponent(query)}&format=json`;
@@ -896,8 +943,8 @@ async function searxSearch(query) {
   if (!resp.ok) throw new Error(`SearXNG ${resp.status}`);
   const data = await resp.json();
   return (data.results || []).slice(0, 3).map(r => ({
-  title: r.title, url: r.url, content: (r.content || '').slice(0, 280)
-}));
+    title: r.title, url: r.url, content: (r.content || '').slice(0, 280)
+  }));
 }
 
 function buildSearchCtx(query, results) {
@@ -997,12 +1044,41 @@ async function send() {
   chat.messages.push({ role: 'user', content: text });
   appendBubble('user', text);
 
-  // search
+  // search / fetch
   let sources = [];
   let apiContent = text;
   const searchOn = $('search-toggle').checked && settings.searxngUrl;
+  const detectedUrl = extractUrl(text);
 
-  if (searchOn) {
+  if (detectedUrl) {
+    // URL present → always try to fetch it, regardless of search toggle
+    setSearchStatus('Fetching page…');
+    try {
+      const pageText = await fetchUrl(detectedUrl);
+      if (pageText && pageText.length > 50) {
+        apiContent = buildFetchCtx(detectedUrl, pageText, text);
+        sources = [{ url: detectedUrl, title: detectedUrl }];
+        setSearchStatus('Page fetched');
+      } else if (searchOn) {
+        // Fetch returned too little — fall back to web search if enabled
+        setSearchStatus('Searching…');
+        const results = await searxSearch(text);
+        sources = results;
+        if (results.length) {
+          apiContent = buildSearchCtx(text, results);
+          setSearchStatus(`${results.length} results`);
+        } else {
+          setSearchStatus('No results');
+        }
+      } else {
+        setSearchStatus('Fetch failed (short response)');
+      }
+    } catch (err) {
+      setSearchStatus('Fetch failed');
+    }
+    setTimeout(() => setSearchStatus(''), 3000);
+  } else if (searchOn) {
+    // No URL, search on → web search
     setSearchStatus(`Searching…`);
     try {
       const results = await searxSearch(text);
