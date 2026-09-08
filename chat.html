@@ -1,0 +1,965 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chat</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #f5f5f4;
+    --surface: #ffffff;
+    --border: #e2e2e0;
+    --border-strong: #c8c8c6;
+    --text: #1a1a18;
+    --text-2: #5a5a57;
+    --text-3: #9a9a97;
+    --accent: #2563eb;
+    --accent-bg: #eff6ff;
+    --user-bg: #1a1a18;
+    --user-text: #f5f5f4;
+    --danger: #dc2626;
+    --danger-bg: #fef2f2;
+    --success: #16a34a;
+    --radius: 12px;
+    --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    --font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111110;
+      --surface: #1c1c1a;
+      --border: #2e2e2b;
+      --border-strong: #444441;
+      --text: #f0f0ee;
+      --text-2: #a0a09d;
+      --text-3: #606060;
+      --accent: #3b82f6;
+      --accent-bg: #1e3a5f;
+      --user-bg: #f0f0ee;
+      --user-text: #111110;
+      --danger: #f87171;
+      --danger-bg: #3b1515;
+      --success: #4ade80;
+    }
+  }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    height: 100dvh;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    overflow: hidden;
+    font-size: 15px;
+    line-height: 1.6;
+  }
+
+  /* ── Header ── */
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    min-height: 52px;
+  }
+
+  header h1 {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--text);
+    margin-right: auto;
+    white-space: nowrap;
+  }
+
+  select, input[type="text"], input[type="password"], textarea {
+    font-family: var(--font);
+    font-size: 13px;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border-strong);
+    border-radius: 7px;
+    padding: 5px 8px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  select:focus, input:focus, textarea:focus {
+    border-color: var(--accent);
+  }
+  select { cursor: pointer; }
+
+  #provider-select { width: 120px; }
+  #model-input { width: 200px; }
+  #api-key-input { width: 190px; font-family: var(--font-mono); font-size: 12px; }
+
+  .header-label {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    white-space: nowrap;
+  }
+
+  .header-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  button {
+    font-family: var(--font);
+    font-size: 13px;
+    font-weight: 500;
+    border: 1px solid var(--border-strong);
+    border-radius: 7px;
+    padding: 5px 10px;
+    cursor: pointer;
+    background: var(--surface);
+    color: var(--text);
+    transition: background 0.12s, border-color 0.12s;
+    white-space: nowrap;
+  }
+  button:hover { background: var(--bg); border-color: var(--text-3); }
+  button:active { transform: scale(0.98); }
+  button.danger { color: var(--danger); border-color: var(--danger); }
+  button.danger:hover { background: var(--danger-bg); }
+
+  /* ── Messages ── */
+  #messages {
+    overflow-y: auto;
+    padding: 24px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    scroll-behavior: smooth;
+  }
+
+  .msg-row {
+    display: flex;
+    padding: 0 16px;
+  }
+  .msg-row.user { justify-content: flex-end; }
+  .msg-row.assistant, .msg-row.system-msg { justify-content: flex-start; }
+
+  .bubble {
+    max-width: min(680px, 85%);
+    padding: 10px 14px;
+    border-radius: var(--radius);
+    line-height: 1.65;
+    word-break: break-word;
+  }
+
+  .msg-row.user .bubble {
+    background: var(--user-bg);
+    color: var(--user-text);
+    border-bottom-right-radius: 4px;
+  }
+
+  .msg-row.assistant .bubble {
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-bottom-left-radius: 4px;
+  }
+
+  .msg-row.system-msg .bubble {
+    background: var(--accent-bg);
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: 7px;
+    font-size: 13px;
+    padding: 7px 12px;
+  }
+
+  .msg-row.error .bubble {
+    background: var(--danger-bg);
+    color: var(--danger);
+    border: 1px solid var(--danger);
+    border-radius: 7px;
+    font-size: 13px;
+    padding: 7px 12px;
+  }
+
+  /* Markdown-ish formatting inside assistant bubbles */
+  .bubble p { margin-bottom: 0.6em; }
+  .bubble p:last-child { margin-bottom: 0; }
+  .bubble strong { font-weight: 600; }
+  .bubble em { font-style: italic; }
+  .bubble code {
+    font-family: var(--font-mono);
+    font-size: 0.88em;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+  }
+  .bubble pre {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    overflow-x: auto;
+    margin: 0.6em 0;
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    line-height: 1.5;
+  }
+  .bubble pre code { background: none; border: none; padding: 0; }
+  .bubble ul, .bubble ol {
+    padding-left: 1.4em;
+    margin-bottom: 0.6em;
+  }
+  .bubble li { margin-bottom: 0.2em; }
+  .bubble h1, .bubble h2, .bubble h3 {
+    font-weight: 600;
+    margin: 0.8em 0 0.3em;
+    line-height: 1.3;
+  }
+  .bubble h1 { font-size: 1.15em; }
+  .bubble h2 { font-size: 1.05em; }
+  .bubble h3 { font-size: 1em; }
+  .bubble blockquote {
+    border-left: 3px solid var(--border-strong);
+    padding-left: 12px;
+    color: var(--text-2);
+    margin: 0.6em 0;
+  }
+  .bubble a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+
+  /* Search source chips */
+  .sources {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+  }
+  .source-chip {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-2);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 7px;
+    text-decoration: none;
+    white-space: nowrap;
+    overflow: hidden;
+    max-width: 200px;
+    text-overflow: ellipsis;
+    transition: border-color 0.12s;
+  }
+  .source-chip:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* Typing indicator */
+  .typing .bubble {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 13px 16px;
+  }
+  .dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--text-3);
+    animation: bounce 1.2s infinite;
+  }
+  .dot:nth-child(2) { animation-delay: 0.2s; }
+  .dot:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes bounce {
+    0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+    40% { transform: translateY(-5px); opacity: 1; }
+  }
+
+  /* ── Input area ── */
+  #input-area {
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  #search-status {
+    font-size: 12px;
+    color: var(--text-3);
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-height: 0;
+    transition: all 0.15s;
+  }
+  #search-status.active { color: var(--accent); }
+  .search-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: pulse 1s infinite;
+  }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  .input-row {
+    display: flex;
+    gap: 8px;
+    align-items: flex-end;
+  }
+
+  #user-input {
+    flex: 1;
+    resize: none;
+    border-radius: 10px;
+    padding: 10px 12px;
+    line-height: 1.5;
+    font-size: 15px;
+    min-height: 44px;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+
+  #send-btn {
+    height: 44px;
+    width: 44px;
+    padding: 0;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    background: var(--user-bg);
+    color: var(--user-text);
+    border: none;
+    font-size: 18px;
+  }
+  #send-btn:hover { opacity: 0.85; }
+  #send-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+  .input-options {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .toggle-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--text-2);
+    cursor: pointer;
+    user-select: none;
+  }
+  .toggle-label input[type="checkbox"] {
+    accent-color: var(--accent);
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+  }
+
+  #searxng-url-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  #searxng-url-group input {
+    width: 230px;
+  }
+
+  #system-prompt-group {
+    width: 100%;
+  }
+  #system-prompt {
+    width: 100%;
+    min-height: 52px;
+    max-height: 140px;
+    resize: vertical;
+    font-size: 13px;
+  }
+
+  /* Config panel toggle */
+  #config-toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  #config-panel {
+    display: none;
+    flex-direction: column;
+    gap: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+  }
+  #config-panel.open { display: flex; }
+
+  /* Empty state */
+  #empty-state {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    color: var(--text-3);
+    padding: 40px 20px;
+    text-align: center;
+    pointer-events: none;
+  }
+  #empty-state svg { opacity: 0.3; }
+  #empty-state p { font-size: 14px; }
+
+  /* Scrollbar */
+  #messages::-webkit-scrollbar { width: 5px; }
+  #messages::-webkit-scrollbar-track { background: transparent; }
+  #messages::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<!-- ── Header / provider config ── -->
+<header>
+  <h1>Chat</h1>
+
+  <div class="header-group">
+    <span class="header-label">Provider</span>
+    <select id="provider-select">
+      <option value="claude">Claude</option>
+      <option value="openai">OpenAI</option>
+      <option value="lan">Custom / LAN</option>
+    </select>
+  </div>
+
+  <div class="header-group" id="model-group">
+    <span class="header-label">Model</span>
+    <input type="text" id="model-input" placeholder="model name" value="claude-sonnet-4-6">
+  </div>
+
+  <div class="header-group" id="apikey-group">
+    <span class="header-label">API Key</span>
+    <input type="password" id="api-key-input" placeholder="sk-…">
+  </div>
+
+  <div class="header-group" id="base-url-group" style="display:none">
+    <span class="header-label">Base URL</span>
+    <input type="text" id="base-url-input" placeholder="http://192.168.1.x:11434" style="width:200px">
+  </div>
+
+  <button class="danger" id="clear-btn" title="Clear conversation">Clear</button>
+</header>
+
+<!-- ── Messages ── -->
+<div id="messages">
+  <div id="empty-state">
+    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+    </svg>
+    <p>No messages yet. Start chatting below.</p>
+  </div>
+</div>
+
+<!-- ── Input area ── -->
+<div id="input-area">
+  <div id="config-toggle-row">
+    <label class="toggle-label">
+      <input type="checkbox" id="search-toggle"> Web search (SearXNG)
+    </label>
+
+    <div id="searxng-url-group" style="display:none">
+      <input type="text" id="searxng-url" placeholder="http://192.168.1.x:8080" value="http://localhost:8080">
+    </div>
+
+    <button id="sysprompt-toggle" style="font-size:12px; padding:4px 8px; margin-left:auto">System prompt ▾</button>
+  </div>
+
+  <div id="config-panel">
+    <div id="system-prompt-group">
+      <textarea id="system-prompt" placeholder="System prompt (optional)…"></textarea>
+    </div>
+  </div>
+
+  <div id="search-status"></div>
+
+  <div class="input-row">
+    <textarea id="user-input" placeholder="Message…" rows="1" autofocus></textarea>
+    <button id="send-btn" title="Send (Enter)">↑</button>
+  </div>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let history = [];       // [{role, content}]
+let isStreaming = false;
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+
+function cfg() {
+  return {
+    provider: $('provider-select').value,
+    model: $('model-input').value.trim() || 'claude-sonnet-4-6',
+    apiKey: $('api-key-input').value.trim(),
+    baseUrl: $('base-url-input').value.trim().replace(/\/$/, ''),
+    systemPrompt: $('system-prompt').value.trim(),
+    searchEnabled: $('search-toggle').checked,
+    searxngUrl: $('searxng-url').value.trim().replace(/\/$/, ''),
+  };
+}
+
+function scrollBottom() {
+  const m = $('messages');
+  m.scrollTo({ top: m.scrollHeight, behavior: 'smooth' });
+}
+
+function appendMessage(role, content, sources = []) {
+  const empty = $('empty-state');
+  if (empty) empty.remove();
+
+  const row = document.createElement('div');
+  row.className = `msg-row ${role}`;
+
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+
+  if (role === 'assistant') {
+    bubble.innerHTML = renderMarkdown(content);
+    if (sources.length > 0) {
+      const s = document.createElement('div');
+      s.className = 'sources';
+      sources.forEach(src => {
+        const a = document.createElement('a');
+        a.className = 'source-chip';
+        a.href = src.url;
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.title = src.title || src.url;
+        try {
+          a.textContent = new URL(src.url).hostname;
+        } catch { a.textContent = src.url; }
+        s.appendChild(a);
+      });
+      bubble.appendChild(s);
+    }
+  } else if (role === 'user') {
+    bubble.textContent = content;
+  } else {
+    bubble.textContent = content;
+  }
+
+  row.appendChild(bubble);
+  $('messages').appendChild(row);
+  scrollBottom();
+  return { row, bubble };
+}
+
+function showTyping() {
+  const row = document.createElement('div');
+  row.className = 'msg-row assistant typing';
+  row.id = 'typing-indicator';
+  row.innerHTML = '<div class="bubble"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>';
+  $('messages').appendChild(row);
+  scrollBottom();
+}
+
+function hideTyping() {
+  const t = $('typing-indicator');
+  if (t) t.remove();
+}
+
+function setSearchStatus(text) {
+  const el = $('search-status');
+  if (!text) { el.innerHTML = ''; el.className = 'search-status'; return; }
+  el.innerHTML = `<span class="search-dot"></span>${text}`;
+  el.className = 'search-status active';
+}
+
+// Minimal markdown renderer
+function renderMarkdown(text) {
+  let html = text
+    // Escape HTML first
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    // Fenced code blocks
+    .replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) =>
+      `<pre><code class="lang-${lang}">${code.trimEnd()}</code></pre>`)
+    // Inline code
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    // Headers
+    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+    .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+    // Bold / italic
+    .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    // Blockquote
+    .replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>')
+    // Unordered list
+    .replace(/^[\-\*] (.+)$/gm, '<li>$1</li>')
+    // Ordered list
+    .replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
+    // Horizontal rule
+    .replace(/^---+$/gm, '<hr>')
+    // Links
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    // Paragraphs (double newline)
+    .replace(/\n\n/g, '</p><p>')
+    // Single newlines
+    .replace(/\n/g, '<br>');
+
+  // Wrap li into ul
+  html = html.replace(/(<li>.*<\/li>)+/gs, m => `<ul>${m}</ul>`);
+  // Wrap in paragraph
+  if (!html.startsWith('<')) html = `<p>${html}</p>`;
+
+  return html;
+}
+
+// ── SearXNG search ──────────────────────────────────────────────────────────
+async function searxSearch(query, searxngUrl) {
+  const url = `${searxngUrl}/search?q=${encodeURIComponent(query)}&format=json`;
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`SearXNG error ${resp.status}`);
+  const data = await resp.json();
+  return (data.results || []).slice(0, 5).map(r => ({
+    title: r.title,
+    url: r.url,
+    content: r.content || '',
+  }));
+}
+
+function buildSearchContext(query, results) {
+  const items = results.map((r, i) =>
+    `[${i+1}] ${r.title}\nURL: ${r.url}\n${r.content}`
+  ).join('\n\n');
+  return `The user asked: "${query}"\n\nHere are web search results to help answer:\n\n${items}\n\nUse these results to answer accurately. Cite sources by [number] when relevant.`;
+}
+
+// ── API calls ────────────────────────────────────────────────────────────────
+async function callClaude(messages, config, onChunk) {
+  const body = {
+    model: config.model,
+    max_tokens: 4096,
+    messages,
+    stream: true,
+  };
+  if (config.systemPrompt) body.system = config.systemPrompt;
+
+  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': config.apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.error?.message || `HTTP ${resp.status}`);
+  }
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split('\n');
+    buf = lines.pop();
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      const data = line.slice(6).trim();
+      if (data === '[DONE]') return;
+      try {
+        const evt = JSON.parse(data);
+        if (evt.type === 'content_block_delta' && evt.delta?.type === 'text_delta') {
+          onChunk(evt.delta.text);
+        }
+      } catch {}
+    }
+  }
+}
+
+async function callOpenAICompat(messages, config, onChunk, baseUrl) {
+  const url = `${baseUrl}/v1/chat/completions`;
+  const sysMsg = config.systemPrompt
+    ? [{ role: 'system', content: config.systemPrompt }]
+    : [];
+
+  const body = {
+    model: config.model,
+    messages: [...sysMsg, ...messages],
+    stream: true,
+  };
+
+  const headers = { 'Content-Type': 'application/json' };
+  if (config.apiKey) headers['Authorization'] = `Bearer ${config.apiKey}`;
+
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+  });
+
+  if (!resp.ok) {
+    const err = await resp.text();
+    throw new Error(`HTTP ${resp.status}: ${err.slice(0, 200)}`);
+  }
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split('\n');
+    buf = lines.pop();
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      const data = line.slice(6).trim();
+      if (data === '[DONE]') return;
+      try {
+        const evt = JSON.parse(data);
+        const delta = evt.choices?.[0]?.delta?.content;
+        if (delta) onChunk(delta);
+      } catch {}
+    }
+  }
+}
+
+// ── Send ────────────────────────────────────────────────────────────────────
+async function send() {
+  if (isStreaming) return;
+  const input = $('user-input');
+  const text = input.value.trim();
+  if (!text) return;
+
+  const config = cfg();
+
+  // Validate
+  if (config.provider === 'claude' && !config.apiKey) {
+    return appendSystemMsg('Please enter your Anthropic API key in the header.', true);
+  }
+  if (config.provider === 'openai' && !config.apiKey) {
+    return appendSystemMsg('Please enter your OpenAI API key in the header.', true);
+  }
+  if (config.provider === 'lan' && !config.baseUrl) {
+    return appendSystemMsg('Please enter the Base URL of your LAN model in the header.', true);
+  }
+  if (config.searchEnabled && !config.searxngUrl) {
+    return appendSystemMsg('Please enter your SearXNG URL.', true);
+  }
+
+  input.value = '';
+  autoResize();
+  isStreaming = true;
+  $('send-btn').disabled = true;
+
+  // Show user message
+  appendMessage('user', text);
+
+  // Optionally search
+  let searchSources = [];
+  let userContent = text;
+
+  if (config.searchEnabled) {
+    setSearchStatus(`Searching for "${text.slice(0, 50)}${text.length > 50 ? '…' : ''}"…`);
+    try {
+      const results = await searxSearch(text, config.searxngUrl);
+      searchSources = results;
+      if (results.length > 0) {
+        userContent = buildSearchContext(text, results);
+        setSearchStatus(`Found ${results.length} results`);
+      } else {
+        setSearchStatus('No search results found');
+      }
+    } catch (err) {
+      setSearchStatus('Search failed: ' + err.message);
+    }
+    setTimeout(() => setSearchStatus(''), 3000);
+  }
+
+  // Build messages array
+  const apiMsg = { role: 'user', content: userContent };
+  history.push({ role: 'user', content: text }); // store original for display
+
+  const apiHistory = history.slice(0, -1).map(m => ({
+    role: m.role,
+    content: m.content,
+  }));
+  if (config.searchEnabled && searchSources.length > 0) {
+    apiHistory.push(apiMsg);
+  } else {
+    apiHistory.push({ role: 'user', content: text });
+  }
+
+  showTyping();
+
+  let fullResponse = '';
+  let bubble = null;
+
+  try {
+    const onChunk = chunk => {
+      if (!bubble) {
+        hideTyping();
+        const { bubble: b } = appendMessage('assistant', '');
+        bubble = b;
+      }
+      fullResponse += chunk;
+      bubble.innerHTML = renderMarkdown(fullResponse);
+
+      // Append sources after first render
+      if (searchSources.length > 0 && !bubble.querySelector('.sources')) {
+        const s = document.createElement('div');
+        s.className = 'sources';
+        searchSources.forEach(src => {
+          const a = document.createElement('a');
+          a.className = 'source-chip';
+          a.href = src.url;
+          a.target = '_blank';
+          a.rel = 'noopener';
+          a.title = src.title || src.url;
+          try { a.textContent = new URL(src.url).hostname; }
+          catch { a.textContent = src.url; }
+          s.appendChild(a);
+        });
+        bubble.appendChild(s);
+      }
+      scrollBottom();
+    };
+
+    if (config.provider === 'claude') {
+      await callClaude(apiHistory, config, onChunk);
+    } else if (config.provider === 'openai') {
+      await callOpenAICompat(apiHistory, config, onChunk, 'https://api.openai.com');
+    } else {
+      await callOpenAICompat(apiHistory, config, onChunk, config.baseUrl);
+    }
+
+    hideTyping();
+    history.push({ role: 'assistant', content: fullResponse });
+
+  } catch (err) {
+    hideTyping();
+    const errRow = document.createElement('div');
+    errRow.className = 'msg-row error';
+    errRow.innerHTML = `<div class="bubble">Error: ${err.message}</div>`;
+    $('messages').appendChild(errRow);
+    scrollBottom();
+    // Roll back user message from history if failed
+    if (history[history.length - 1].role === 'user') history.pop();
+  }
+
+  isStreaming = false;
+  $('send-btn').disabled = false;
+  input.focus();
+}
+
+function appendSystemMsg(text, isError = false) {
+  const row = document.createElement('div');
+  row.className = `msg-row ${isError ? 'error' : 'system-msg'}`;
+  row.innerHTML = `<div class="bubble">${text}</div>`;
+  $('messages').appendChild(row);
+  scrollBottom();
+}
+
+// ── UI wiring ────────────────────────────────────────────────────────────────
+function autoResize() {
+  const t = $('user-input');
+  t.style.height = 'auto';
+  t.style.height = Math.min(t.scrollHeight, 200) + 'px';
+}
+
+$('user-input').addEventListener('input', autoResize);
+$('user-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    send();
+  }
+});
+
+$('send-btn').addEventListener('click', send);
+
+$('clear-btn').addEventListener('click', () => {
+  if (!confirm('Clear conversation?')) return;
+  history = [];
+  $('messages').innerHTML = `
+    <div id="empty-state">
+      <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+      </svg>
+      <p>No messages yet. Start chatting below.</p>
+    </div>`;
+});
+
+$('provider-select').addEventListener('change', () => {
+  const v = $('provider-select').value;
+  const isClaude = v === 'claude';
+  const isOpenAI = v === 'openai';
+  const isLAN = v === 'lan';
+
+  $('apikey-group').style.display = isLAN ? 'none' : 'flex';
+  $('base-url-group').style.display = isLAN ? 'flex' : 'none';
+
+  const models = {
+    claude: 'claude-sonnet-4-6',
+    openai: 'gpt-4o',
+    lan: 'llama3',
+  };
+  $('model-input').value = models[v] || '';
+  $('model-input').placeholder = isLAN ? 'llama3, mistral, …' : 'model name';
+});
+
+$('search-toggle').addEventListener('change', () => {
+  $('searxng-url-group').style.display =
+    $('search-toggle').checked ? 'flex' : 'none';
+});
+
+$('sysprompt-toggle').addEventListener('click', () => {
+  const panel = $('config-panel');
+  const open = panel.classList.toggle('open');
+  $('sysprompt-toggle').textContent = open ? 'System prompt ▴' : 'System prompt ▾';
+});
+
+// Persist config to localStorage
+const STORE_KEYS = ['provider-select', 'model-input', 'api-key-input',
+  'base-url-input', 'searxng-url', 'system-prompt'];
+
+STORE_KEYS.forEach(id => {
+  const el = $(id);
+  if (!el) return;
+  const stored = localStorage.getItem('chat_' + id);
+  if (stored !== null) {
+    if (el.tagName === 'SELECT') el.value = stored;
+    else el.value = stored;
+  }
+  el.addEventListener('change', () => localStorage.setItem('chat_' + id, el.value));
+  if (el.tagName === 'TEXTAREA') {
+    el.addEventListener('input', () => localStorage.setItem('chat_' + id, el.value));
+  }
+});
+
+// Restore provider-dependent UI
+$('provider-select').dispatchEvent(new Event('change'));
+if ($('search-toggle').checked) $('searxng-url-group').style.display = 'flex';
+</script>
+</body>
+</html>
