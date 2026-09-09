@@ -636,7 +636,7 @@ body {
       <div class="modal-section-title">Search</div>
       <div class="field">
         <label class="field-label">SearXNG URL</label>
-                <input type="text" id="s-searxng" placeholder="http://192.168.1.x:8080" value="http://localhost:8889">
+        <input type="text" id="s-searxng" placeholder="http://192.168.1.x:8080" value="">
         <span class="field-hint">Your SearXNG instance. Leave blank to disable search.</span>
       </div>
     </div>
@@ -658,12 +658,13 @@ const SETTINGS_KEY = 'chat_settings';
 const CHATS_KEY    = 'chat_history';
 
 // ── State ─────────────────────────────────────────────────────────────────
+const APP_HOST = window.location.host;
 let settings = {
   provider: 'lan',
   model: '',
   apiKey: '',
-  baseUrl: '',
-  searxngUrl: 'http://localhost:8889',
+  baseUrl: `http://${APP_HOST}`,
+  searxngUrl: `http://${APP_HOST}`,
   systemPrompt: '',
 };
 
@@ -939,8 +940,20 @@ function buildFetchCtx(url, content, query) {
 // ── SearXNG ───────────────────────────────────────────────────────────────
 async function searxSearch(query) {
   const url = `${settings.searxngUrl}/search?q=${encodeURIComponent(query)}&format=json`;
-  const resp = await fetch(url);
-  if (!resp.ok) throw new Error(`SearXNG ${resp.status}`);
+  let resp;
+  try {
+    resp = await fetch(url);
+  } catch (e) {
+    console.warn('Search backend unreachable:', e.message);
+    throw new Error('search backend not reachable (is SearXNG running?)');
+  }
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => '');
+    let hint = body || `HTTP ${resp.status}`;
+    try { hint = JSON.parse(body).error || hint; } catch {}
+    console.warn('SearXNG error:', resp.status, hint);
+    throw new Error(`search backend: ${hint}`);
+  }
   const data = await resp.json();
   return (data.results || []).slice(0, 3).map(r => ({
     title: r.title, url: r.url, content: (r.content || '').slice(0, 280)
@@ -1197,7 +1210,7 @@ loadChats();
 renderChatList();
 
 // open settings automatically if nothing is configured
-if (!settings.model && !settings.baseUrl) {
+if (!settings.model) {
   openSettings();
 }
 </script>
