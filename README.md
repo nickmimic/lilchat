@@ -41,6 +41,11 @@ A minimal chat UI for your local LLM, with optional web search and URL fetch.
 - **URL fetch** — paste a URL in your message; lilchat reads the page and
   summarizes it. Works with or without SearXNG.
 - **History** — the sidebar keeps your chats in the browser. ✕ to delete.
+- **Import / Export** — in Settings (⚙) → Chats. Export saves every chat to a
+  JSON file you can back up or move to another machine. Import accepts that
+  file, or a **Claude.ai data export** (`conversations.json` from
+  claude.ai → Settings → Privacy → Export data). Existing chats are kept and
+  duplicates are skipped, so re-importing is safe.
 
 ## Stopping
 

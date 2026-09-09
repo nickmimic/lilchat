@@ -548,6 +548,24 @@ body {
   transition: opacity 0.12s;
 }
 .save-btn:hover { opacity: 0.8; }
+
+.btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.small-btn {
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.small-btn:hover { background: var(--surface2); }
+.field-hint code { font-family: var(--mono); font-size: 0.9em; }
+#import-status:empty { display: none; }
+#import-status.ok { color: var(--accent); }
+#import-status.err { color: var(--danger); }
 </style>
 </head>
 <body>
@@ -648,6 +666,20 @@ body {
       </div>
     </div>
 
+    <div class="field-group">
+      <div class="modal-section-title">Chats</div>
+      <div class="btn-row">
+        <button class="small-btn" id="export-chats">Export all chats</button>
+        <button class="small-btn" id="import-chats">Import chats…</button>
+        <input type="file" id="import-file" accept=".json,application/json" multiple hidden>
+      </div>
+      <span class="field-hint">
+        Import accepts a lilchat export or a Claude.ai data export (<code>conversations.json</code>).
+        Existing chats are kept; duplicates are skipped.
+      </span>
+      <div class="field-hint" id="import-status"></div>
+    </div>
+
     <button class="save-btn" id="save-settings">Save settings</button>
   </div>
 </div>
@@ -737,15 +769,14 @@ function renderChatList() {
   const list = $('chat-list');
   list.innerHTML = '';
 
-  const ids = Object.keys(chats).sort((a, b) => b.localeCompare(a));
+  const ids = Object.keys(chats).sort((a, b) => chatTime(b) - chatTime(a));
   if (ids.length === 0) return;
 
   const todayIds = [], olderIds = [];
   const dayMs = 86400000;
   const now = Date.now();
   ids.forEach(id => {
-    const ts = parseInt(id, 36);
-    (now - ts < dayMs ? todayIds : olderIds).push(id);
+    (now - chatTime(id) < dayMs ? todayIds : olderIds).push(id);
   });
 
   function addSection(label, sectionIds) {
@@ -781,6 +812,13 @@ function renderChatList() {
 
 function escHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// creation time of a chat: stored `created`, else decode the timestamp prefix of its id
+function chatTime(id) {
+  const c = chats[id];
+  if (c && c.created) return c.created;
+  return parseInt(id.slice(0, 8), 36) || 0;
 }
 
 function switchChat(id) {
@@ -1048,6 +1086,7 @@ async function send() {
     activeChatId = genId();
     chats[activeChatId] = {
       title: text.slice(0, 48) + (text.length > 48 ? '…' : ''),
+      created: Date.now(),
       messages: [],
     };
     renderChatList();
@@ -1154,6 +1193,7 @@ function openSettings() {
   $('s-searxng').value   = settings.searxngUrl;
   $('s-sysprompt').value = settings.systemPrompt;
   updateProviderFields();
+  $('import-status').textContent = '';
   $('settings-overlay').classList.add('open');
 }
 
@@ -1185,6 +1225,158 @@ $('save-settings').addEventListener('click', () => {
 $('settings-btn').addEventListener('click', openSettings);
 $('close-settings').addEventListener('click', closeSettings);
 $('settings-overlay').addEventListener('click', e => { if (e.target === $('settings-overlay')) closeSettings(); });
+
+// ── Import / Export ───────────────────────────────────────────────────────
+const EXPORT_FORMAT = 'lilchat';
+const ATTACHMENT_CHAR_CAP = 4000;   // per attachment, so imports don't swamp the local model's context
+
+function setImportStatus(text, isErr) {
+  const el = $('import-status');
+  el.textContent = text;
+  el.className = 'field-hint ' + (isErr ? 'err' : 'ok');
+}
+
+function exportChats() {
+  const payload = {
+    format: EXPORT_FORMAT,
+    version: 1,
+    exported_at: new Date().toISOString(),
+    chats,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `lilchat-export-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(a.href);
+  setImportStatus(`Exported ${Object.keys(chats).length} chat(s).`);
+}
+
+// id whose base36 prefix encodes the creation time, so it sorts/groups like native chats
+function idFromTime(ms) {
+  return ms.toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+// Claude.ai export: one message's displayable text.
+// Prefer the `content` text blocks; the flat `text` field contains placeholder lines
+// ("This block is not supported…") wherever a tool/thinking block sat.
+function claudeMessageText(msg) {
+  const blocks = Array.isArray(msg.content) ? msg.content : [];
+  let text = blocks.filter(b => b && b.type === 'text' && b.text)
+                   .map(b => b.text.trim()).filter(Boolean).join('\n\n');
+  if (!text && msg.text) {
+    text = msg.text.replace(/```\s*This block is not supported on your current device yet\.\s*```/g, '').trim();
+  }
+  return text;
+}
+
+function claudeAttachmentsText(msg) {
+  const parts = [];
+  for (const a of msg.attachments || []) {
+    if (!a || !a.file_name) continue;
+    let body = (a.extracted_content || '').trim();
+    if (body.length > ATTACHMENT_CHAR_CAP) {
+      body = body.slice(0, ATTACHMENT_CHAR_CAP) + `\n… [truncated, ${a.extracted_content.length} chars total]`;
+    }
+    parts.push(body ? `[Attached file: ${a.file_name}]\n${body}` : `[Attached file: ${a.file_name}]`);
+  }
+  for (const f of msg.files || []) {
+    if (f && f.file_name) parts.push(`[Attached file: ${f.file_name}]`);
+  }
+  return parts.join('\n\n');
+}
+
+// Claude.ai `conversations.json` → { id: chat }
+function convertClaudeExport(convs) {
+  const out = {};
+  let skippedEmpty = 0;
+  for (const conv of convs) {
+    const msgs = [];
+    for (const m of conv.chat_messages || []) {
+      const role = m.sender === 'human' ? 'user' : m.sender === 'assistant' ? 'assistant' : null;
+      if (!role) continue;
+      let content = claudeMessageText(m);
+      if (role === 'user') {
+        const att = claudeAttachmentsText(m);
+        if (att) content = content ? `${content}\n\n${att}` : att;
+      }
+      if (!content) continue;                      // e.g. assistant turns that were only tool calls
+      const last = msgs[msgs.length - 1];
+      if (last && last.role === role) last.content += '\n\n' + content;   // keep strict user/assistant alternation
+      else msgs.push({ role, content });
+    }
+    if (!msgs.length) { skippedEmpty++; continue; }
+    const created = Date.parse(conv.created_at) || Date.now();
+    const title = (conv.name || '').trim()
+      || msgs[0].content.slice(0, 48) + (msgs[0].content.length > 48 ? '…' : '');
+    out[idFromTime(created)] = {
+      title,
+      created,
+      messages: msgs,
+      source: 'claude.ai',
+      sourceId: conv.uuid,
+    };
+  }
+  return { chats: out, skippedEmpty };
+}
+
+// Accepts either a lilchat export or a Claude.ai export; returns { chats, label, skippedEmpty }
+function parseImport(json) {
+  if (json && json.format === EXPORT_FORMAT && json.chats && typeof json.chats === 'object') {
+    return { chats: json.chats, label: 'lilchat', skippedEmpty: 0 };
+  }
+  if (Array.isArray(json) && json.length && json.every(c => c && Array.isArray(c.chat_messages))) {
+    const r = convertClaudeExport(json);
+    return { chats: r.chats, label: 'Claude.ai', skippedEmpty: r.skippedEmpty };
+  }
+  throw new Error('Unrecognized file — expected a lilchat export or a Claude.ai conversations.json');
+}
+
+function mergeChats(incoming) {
+  // dedupe by sourceId (Claude uuid) or by identical id
+  const seenSource = new Set(Object.values(chats).map(c => c.sourceId).filter(Boolean));
+  let added = 0, dup = 0;
+  for (const [id, chat] of Object.entries(incoming)) {
+    if (!chat || !Array.isArray(chat.messages)) continue;
+    if (chats[id] || (chat.sourceId && seenSource.has(chat.sourceId))) { dup++; continue; }
+    if (!chat.created) chat.created = parseInt(id.slice(0, 8), 36) || Date.now();
+    chats[id] = chat;
+    if (chat.sourceId) seenSource.add(chat.sourceId);
+    added++;
+  }
+  return { added, dup };
+}
+
+async function importChatFiles(files) {
+  let added = 0, dup = 0, skippedEmpty = 0;
+  const labels = new Set();
+  for (const file of files) {
+    let json;
+    try { json = JSON.parse(await file.text()); }
+    catch { return setImportStatus(`${file.name}: not valid JSON.`, true); }
+    let parsed;
+    try { parsed = parseImport(json); }
+    catch (e) { return setImportStatus(`${file.name}: ${e.message}`, true); }
+    const r = mergeChats(parsed.chats);
+    added += r.added; dup += r.dup; skippedEmpty += parsed.skippedEmpty;
+    labels.add(parsed.label);
+  }
+  saveChats();
+  renderChatList();
+  const bits = [`Imported ${added} chat(s) from ${[...labels].join(' + ')}.`];
+  if (dup) bits.push(`${dup} duplicate(s) skipped.`);
+  if (skippedEmpty) bits.push(`${skippedEmpty} empty conversation(s) skipped.`);
+  setImportStatus(bits.join(' '));
+}
+
+$('export-chats').addEventListener('click', exportChats);
+$('import-chats').addEventListener('click', () => $('import-file').click());
+$('import-file').addEventListener('change', e => {
+  if (e.target.files.length) importChatFiles([...e.target.files]);
+  e.target.value = '';   // allow re-importing the same file
+});
 
 // ── Sidebar ───────────────────────────────────────────────────────────────
 $('sidebar-toggle').addEventListener('click', () => {
