@@ -5,7 +5,7 @@ Everything the browser needs lives on one port, so the UI is same-origin whether
 it is opened on this Mac or from another device on the LAN.
 """
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
-import urllib.request, urllib.parse, urllib.error, html, json, re, os
+import urllib.request, urllib.parse, urllib.error, html, json, re, os, socket, sys, time
 
 PORT    = 8889
 SEARXNG = 'http://localhost:8888'   # your SearXNG instance
@@ -33,7 +33,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Length', str(len(body)))
         self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def _json_err(self, status, msg):
         self._send(status, json.dumps({'error': msg}), 'application/json')
@@ -69,9 +72,15 @@ class Handler(BaseHTTPRequestHandler):
     def serve_chat(self):
         try:
             with open(CHAT_HTML, 'rb') as f:
-                self._send(200, f.read(), 'text/html; charset=utf-8')
-        except FileNotFoundError:
-            self._send(404, 'chat.html not found next to proxy.py')
+                body = f.read()
+        except OSError as e:
+            return self._send(500, f'Could not read {CHAT_HTML}: {e}')
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/html; charset=utf-8')
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Cache-Control', 'no-store')   # never let a browser cache a stale copy
+        self.end_headers()
+        self.wfile.write(body)
 
     def fetch_url(self, parsed):
         target = urllib.parse.parse_qs(parsed.query).get('url', [None])[0]
@@ -132,15 +141,52 @@ class Handler(BaseHTTPRequestHandler):
                 except (BrokenPipeError, ConnectionResetError):
                     break  # browser closed the tab / stopped generation
 
+    # one concise line per request:  12:34:56  192.168.1.92   GET /            200
+    def log_request(self, code='-', size='-'):
+        path = self.path if len(self.path) <= 60 else self.path[:57] + '...'
+        print(f'{time.strftime("%H:%M:%S")}  {self.client_address[0]:<15}  {self.command:<4} {path:<60} {code}', flush=True)
+
+    def log_error(self, fmt, *args):
+        print(f'{time.strftime("%H:%M:%S")}  {self.client_address[0]:<15}  !! ' + (fmt % args), flush=True)
+
     def log_message(self, *a):
         pass
 
 
+class Server(ThreadingHTTPServer):
+    daemon_threads = True          # Ctrl+C exits even mid-stream
+    allow_reuse_address = True     # restart immediately without "address in use"
+
+    def handle_error(self, request, client_address):
+        # Browsers open speculative connections and drop them; that's not an error worth a traceback.
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (ConnectionResetError, BrokenPipeError, ConnectionAbortedError, TimeoutError)):
+            return
+        super().handle_error(request, client_address)
+
+
+def lan_ip():
+    """Best-effort LAN address for the banner (no packets are sent)."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(('10.255.255.255', 1))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except OSError:
+        return None
+
+
 if __name__ == '__main__':
     print(f'lilchat  →  http://localhost:{PORT}/')
+    ip = lan_ip()
+    if ip:
+        print(f'  on LAN  : http://{ip}:{PORT}/')
     print(f'  LLM     : {LLM}')
     print(f'  SearXNG : {SEARXNG}')
+    print(f'  UI file : {CHAT_HTML}' + ('' if os.path.exists(CHAT_HTML) else '   !! NOT FOUND'))
+    print(flush=True)
     try:
-        ThreadingHTTPServer(('', PORT), Handler).serve_forever()
+        Server(('', PORT), Handler).serve_forever()
     except KeyboardInterrupt:
         pass
